@@ -1,12 +1,4 @@
-import psycopg2
+from sqlmodel import create_engine
 
-# https://www.psycopg.org/docs/module.html
-# https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
-
-
-conn = psycopg2.connect(host="db", port=5432, database="fastapi", user="postgres", password="postgres-admin")
-
-cur = conn.cursor()
-
-cur.execute("SELECT * FROM posts;")
-print(cur.fetchone())
+database_url = "postgresql://postgres:postgres-admin@db:5432/fastapi"
+engine = create_engine(database_url, echo=True)

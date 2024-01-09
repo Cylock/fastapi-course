@@ -6,6 +6,14 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import time
 
+# database and models
+from .database import engine
+from sqlmodel import SQLModel, Session
+from . import model # noqa  # this is for flake8 complaining that model is not used explicitly in the code below, but it is loaded
+                            # for SQLModel to work
+
+SQLModel.metadata.create_all(engine)
+
 app = FastAPI()
 
 
@@ -34,7 +42,6 @@ while True:
         print("Connecting to database failed")
         print("Error: ", error)
         time.sleep(5)
-
 
 # Global variable declaration
 my_posts = [{"title": "title of post 1", "content": "content of post 1", "id": 1},
