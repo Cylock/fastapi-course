@@ -1,58 +1,36 @@
-from typing import Optional
-from fastapi import FastAPI, HTTPException, status
-from pydantic import BaseModel
-# from random import randrange
-import psycopg2
-from psycopg2.extras import RealDictCursor
-import time
+from fastapi import Depends, FastAPI, HTTPException, status
+from sqlmodel import Session, select
 
 # database and models
-from .database import engine
-from sqlmodel import SQLModel, Session
-from . import model # noqa  # this is for flake8 complaining that model is not used explicitly in the code below, but it is loaded
-                            # for SQLModel to work
+from . import (  # noqa  # this is for flake8 complaining that model is not used explicitly in the code below, but it is loaded for SQLModel to work
+    model,
+    database,
+)
 
-SQLModel.metadata.create_all(engine)
+
+# Main section
 
 app = FastAPI()
 
 
-class Post(BaseModel):
-    title: str
-    content: str
-    published: bool = True
-    rating: Optional[int] = None  # using pythons oob syntax `=` for default
-    # If I want to add pydantic strict type checking on
-    # a field and combine it with a default
-    # https://docs.pydantic.dev/2.2/usage/strict_mode/#strict-mode-with-field
-    # rating: Optional[int] = Field(default=None,strict=True)
+@app.on_event("startup")
+def on_startup():
+    database.create_db_and_tables()
 
-
-while True:
-    try:
-        conn = psycopg2.connect(host="db",
-                                database="fastapi",
-                                user="postgres",
-                                password='postgres-admin',
-                                cursor_factory=RealDictCursor)
-        cur = conn.cursor()
-        print("Database connection was succesful")
-        break
-    except Exception as error:
-        print("Connecting to database failed")
-        print("Error: ", error)
-        time.sleep(5)
 
 # Global variable declaration
-my_posts = [{"title": "title of post 1", "content": "content of post 1", "id": 1},
-            {"title": "favorite foods", "content": "I like pizza", "id": 2},
-            {"title": "drinks", "content": "I like cola", "id": "sadas"}]
+my_posts = [
+    {"title": "title of post 1", "content": "content of post 1", "id": 1},
+    {"title": "favorite foods", "content": "I like pizza", "id": 2},
+    {"title": "drinks", "content": "I like cola", "id": "sadas"},
+]
 
 
 def find_index_post(id):
     for i, p in enumerate(my_posts):
-        if p['id'] == id:
+        if p["id"] == id:
             return i
+
 
 # Automatically convert to string the comparison element without using pydantics data conversion on id
 # def find_post(id):
@@ -64,18 +42,31 @@ def find_index_post(id):
 @app.get("/")
 def read_root():
     return {"message": "This is live reload"}
+    # with Session(engine) as session:
+
 
 # def read_root():
 #     app.get("/")
 #     return {"message:" "This is behaviour without decorator"}
 
 
+@app.get("/sqlalchemy")
+def test_posts(session: Session = Depends(database.get_session)):
+        
+        
+    statement = select(model.Posts)    
+    posts = session.exec(statement).all()    
+       
+    return {"data": posts}
+
+
 @app.get("/posts")
-def get_posts():
-    cur.execute("SELECT * FROM posts;")
-    all_posts = cur.fetchall()
+def get_posts(session: Session = Depends(database.get_session)):
+    session.exec("SELECT * FROM posts;")
+    all_posts = session.fetchall()
     print(all_posts)
     return {"data": all_posts}
+
 
 # Matching routes are evaluated in order, so if there are 2 definitions of the same route (ex. /posts ),
 # first match is executed as code
@@ -84,11 +75,9 @@ def get_posts():
 # def get_posts():
 #     return {"data": "This route is not evaluated"}
 
-# ... = Elipsis - a constant in python which acts as a placeholder
-
 
 @app.post("/posts", status_code=status.HTTP_201_CREATED)
-def create_post(post: Post):
+def create_post(post: model.Posts):
 
     # Debug
     # print(post)
@@ -104,10 +93,13 @@ def create_post(post: Post):
 
     # This variant is using query variables instead of a formatted/interpolated string
     # which looks better and less error prone/security (SQL injection)
-    cur.execute(""" INSERT
+    cur.execute(
+        """ INSERT
                     INTO posts (title, content, published)
                     VALUES (%s,%s,%s)
-                    RETURNING *;""", (post.title, post.content, post.published))
+                    RETURNING *;""",
+        (post.title, post.content, post.published),
+    )
     inserted_row = cur.fetchone()
     conn.commit()
     return {"data": inserted_row}
@@ -122,7 +114,9 @@ def get_post(post_id: int):
     post = cur.fetchone()
 
     if post is None:
-        raise HTTPException(status_code=404, detail="Post not found, maybe non-existing id")
+        raise HTTPException(
+            status_code=404, detail="Post not found, maybe non-existing id"
+        )
 
     # The value of %s must be a string since we have triple quotes otherwise
     # we get "TypeError: 'int' object does not support indexing"
@@ -176,14 +170,19 @@ def get_post(post_id: int):
 
 # Another variation
 
+
 @app.delete("/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_post(post_id: int):
 
     cur.execute("""DELETE FROM posts WHERE id = %s RETURNING *;""", (post_id,))
     post = cur.fetchone()
     if post is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"post with {post_id} doesn't exist")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"post with {post_id} doesn't exist",
+        )
     conn.commit()
+
 
 # My variation for changing each key 1 by 1 if I find the post in my_posts
 # @app.put("/posts/{post_id}",status_code=status.HTTP_200_OK)
@@ -203,17 +202,23 @@ def delete_post(post_id: int):
 
 
 @app.put("/posts/{post_id}")
-def update_post(updated_post: Post, post_id: int):
+def update_post(updated_post: model.Posts, post_id: int):
 
-    cur.execute(""" UPDATE
+    cur.execute(
+        """ UPDATE
                 posts
                 SET title = %s, content = %s, published = %s
                 WHERE id = %s
-                RETURNING *;""", (updated_post.title, updated_post.content, updated_post.published, post_id))
+                RETURNING *;""",
+        (updated_post.title, updated_post.content, updated_post.published, post_id),
+    )
     updated_row = cur.fetchone()
 
     if updated_row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"post with {post_id} doesn't exist")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"post with {post_id} doesn't exist",
+        )
 
     conn.commit()
     return {"data": updated_row}
